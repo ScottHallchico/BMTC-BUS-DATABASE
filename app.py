@@ -5,14 +5,10 @@ import json
 
 app = Flask(__name__)
 
-# -----------------------------
-# Redis
-# -----------------------------
+# ---------------- REDIS ----------------
 r = redis.Redis(host='localhost', port=6379, db=0)
 
-# -----------------------------
-# DB helper
-# -----------------------------
+# ---------------- DB HELPER ----------------
 def get_db():
     return mysql.connector.connect(
         host="localhost",
@@ -21,23 +17,18 @@ def get_db():
         database="bmtc_system"
     )
 
-# -----------------------------
-# Auth & Home
-# -----------------------------
+# ---------------- HOME & LOGIN ----------------
 @app.route('/')
 def home():
     return render_template('index.html')
 
-
 @app.route('/login', methods=['POST'])
 def login():
-    if request.form['username'] == "admin" and request.form['password'] == "admin123":
+    if request.form['username'] == 'admin' and request.form['password'] == 'admin123':
         return redirect(url_for('dashboard'))
-    return "Invalid credentials", 401
+    return "Invalid Credentials", 401
 
-# -----------------------------
-# Dashboard
-# -----------------------------
+# ---------------- DASHBOARD ----------------
 @app.route('/dashboard')
 def dashboard():
     db = get_db()
@@ -88,7 +79,7 @@ def dashboard():
     db.close()
 
     return render_template(
-        "dashboard.html",
+        'dashboard.html',
         buses=buses,
         drivers=drivers,
         stops=stops,
@@ -98,44 +89,31 @@ def dashboard():
         assignments=assignments
     )
 
-# -----------------------------
-# BUS CRUD
-# -----------------------------
+# ---------------- BUS CRUD ----------------
 @app.route('/bus/add', methods=['POST'])
 def add_bus():
     db = get_db()
     cursor = db.cursor()
     cursor.execute(
         "INSERT INTO BUS (reg_no, capacity, status) VALUES (%s,%s,%s)",
-        (
-            request.form['reg_no'],
-            request.form.get('capacity'),
-            request.form.get('status', 'Active')
-        )
+        (request.form['reg_no'],
+         request.form.get('capacity'),
+         request.form.get('status', 'Active'))
     )
     db.commit()
     db.close()
     return redirect(url_for('dashboard'))
 
-
 @app.route('/bus/delete/<int:bus_id>', methods=['POST'])
 def delete_bus(bus_id):
     db = get_db()
     cursor = db.cursor()
-
-    cursor.execute("SELECT COUNT(*) FROM TRIP_ASSIGNMENT WHERE bus_id=%s", (bus_id,))
-    if cursor.fetchone()[0] > 0:
-        db.close()
-        return "Bus is assigned to a trip", 400
-
     cursor.execute("DELETE FROM BUS WHERE bus_id=%s", (bus_id,))
     db.commit()
     db.close()
     return redirect(url_for('dashboard'))
 
-# -----------------------------
-# DRIVER CRUD
-# -----------------------------
+# ---------------- DRIVER CRUD ----------------
 @app.route('/driver/add', methods=['POST'])
 def add_driver():
     db = get_db()
@@ -148,35 +126,34 @@ def add_driver():
     db.close()
     return redirect(url_for('dashboard'))
 
-
 @app.route('/driver/delete/<int:driver_id>', methods=['POST'])
 def delete_driver(driver_id):
     db = get_db()
     cursor = db.cursor()
-
-    cursor.execute("SELECT COUNT(*) FROM TRIP_ASSIGNMENT WHERE driver_id=%s", (driver_id,))
-    if cursor.fetchone()[0] > 0:
-        db.close()
-        return "Driver is assigned to a trip", 400
-
     cursor.execute("DELETE FROM DRIVER WHERE driver_id=%s", (driver_id,))
     db.commit()
     db.close()
     return redirect(url_for('dashboard'))
 
-# -----------------------------
-# Live GPS API
-# -----------------------------
+# ---------------- LIVE GPS API (REDIS + DB MERGE) ----------------
 @app.route('/api/locations')
 def api_locations():
+    db = get_db()
+    cursor = db.cursor(dictionary=True)
+    cursor.execute("SELECT bus_id, reg_no FROM BUS")
+    bus_map = {row['bus_id']: row['reg_no'] for row in cursor.fetchall()}
+    db.close()
+
     data = []
     for key in r.keys("bus_location:*"):
         try:
-            data.append(json.loads(r.get(key)))
+            obj = json.loads(r.get(key))
+            obj['reg_no'] = bus_map.get(obj['bus_id'], f"Bus {obj['bus_id']}")
+            data.append(obj)
         except:
             pass
-    return jsonify(data)
 
+    return jsonify(data)
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
