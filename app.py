@@ -5,21 +5,17 @@ import json
 
 app = Flask(__name__)
 
-# Connect to Redis (for live GPS)
+# Connect to Redis
 r = redis.Redis(host='localhost', port=6379, db=0)
 
-# 1. Home Page (Login)
 @app.route('/')
 def home():
     return render_template('index.html')
 
-# 2. Login Logic
 @app.route('/login', methods=['POST'])
 def login():
     username = request.form['username']
     password = request.form['password']
-    
-    # Hardcoded for simplicity (In real life, check MySQL!)
     if username == "admin" and password == "admin123":
         return redirect(url_for('dashboard'))
     else:
@@ -32,37 +28,73 @@ def dashboard():
     )
     cursor = db.cursor(dictionary=True)
     
-    # 1. Fetch Fleet
-    cursor.execute("SELECT * FROM Fleet")
-    fleet_data = cursor.fetchall()
+    # 1. BUS Table
+    cursor.execute("SELECT * FROM BUS")
+    buses = cursor.fetchall()
     
-    # 2. Fetch Staff (Using your specific table name)
-    cursor.execute("SELECT * FROM Staff")
-    staff_data = cursor.fetchall()
+    # 2. DRIVER Table
+    cursor.execute("SELECT * FROM DRIVER")
+    drivers = cursor.fetchall()
 
-    # 3. Fetch Schedule (Assuming you have this table, or creates an empty list if not)
-    try:
-        cursor.execute("SELECT * FROM Schedules")
-        schedule_data = cursor.fetchall()
-    except:
-        schedule_data = [] # clear error if table doesn't exist yet
+    # 3. STOP Table
+    cursor.execute("SELECT * FROM STOP")
+    stops = cursor.fetchall()
+
+    # 4. ROUTE Table
+    cursor.execute("SELECT * FROM ROUTE")
+    routes = cursor.fetchall()
+
+    # 5. ROUTE_STOP Table (Joined for readability)
+    cursor.execute("""
+        SELECT rs.route_stop_id, r.code as route_code, s.name as stop_name, rs.sequence_no
+        FROM ROUTE_STOP rs
+        JOIN ROUTE r ON rs.route_id = r.route_id
+        JOIN STOP s ON rs.stop_id = s.stop_id
+        ORDER BY r.code, rs.sequence_no
+    """)
+    route_stops = cursor.fetchall()
+
+    # 6. TRIP Table (Joined with Route info)
+    cursor.execute("""
+        SELECT t.trip_id, r.code as route_code, t.scheduled_date, t.scheduled_start_time, t.status
+        FROM TRIP t
+        JOIN ROUTE r ON t.route_id = r.route_id
+        ORDER BY t.scheduled_date DESC, t.scheduled_start_time ASC
+    """)
+    trips = cursor.fetchall()
+
+    # 7. TRIP_ASSIGNMENT Table (Fully Joined)
+    cursor.execute("""
+        SELECT ta.assignment_id, t.trip_id, r.code as route_code, b.reg_no, d.name as driver_name, ta.assignment_time
+        FROM TRIP_ASSIGNMENT ta
+        JOIN TRIP t ON ta.trip_id = t.trip_id
+        JOIN ROUTE r ON t.route_id = r.route_id
+        LEFT JOIN BUS b ON ta.bus_id = b.bus_id
+        LEFT JOIN DRIVER d ON ta.driver_id = d.driver_id
+    """)
+    assignments = cursor.fetchall()
 
     db.close()
     
-    # Send all three lists to the HTML
     return render_template('dashboard.html', 
-                           fleet=fleet_data, 
-                           staff=staff_data, 
-                           schedules=schedule_data)
+                           buses=buses, 
+                           drivers=drivers,
+                           stops=stops,
+                           routes=routes,
+                           route_stops=route_stops,
+                           trips=trips,
+                           assignments=assignments)
 
-# 4. API for Live Map (The Frontend calls this every 1 second)
 @app.route('/api/locations')
 def get_locations():
     keys = r.keys("bus_location:*")
     buses = []
     for key in keys:
-        data = json.loads(r.get(key))
-        buses.append(data)
+        try:
+            data = json.loads(r.get(key))
+            buses.append(data)
+        except:
+            pass
     return jsonify(buses)
 
 if __name__ == '__main__':
